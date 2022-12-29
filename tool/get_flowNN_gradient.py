@@ -7,6 +7,51 @@ import scipy.io as sio
 from utils.common_utils import interp, BFconsistCheck, \
     FBconsistCheck, consistCheck, get_KeySourceFrame_flowNN_gradient
 
+def calculateHaveNN(indFrame, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB):
+    if args.Nonlocal:
+        consistencyMap[:, :, 2, indFrame], _ = consistCheck(
+            videoNonLocalFlowB[:, :, :, 0, indFrame],
+            videoNonLocalFlowF[:, :, :, 0, indFrame])
+        consistencyMap[:, :, 3, indFrame], _ = consistCheck(
+            videoNonLocalFlowB[:, :, :, 1, indFrame],
+            videoNonLocalFlowF[:, :, :, 1, indFrame])
+        consistencyMap[:, :, 4, indFrame], _ = consistCheck(
+            videoNonLocalFlowB[:, :, :, 2, indFrame],
+            videoNonLocalFlowF[:, :, :, 2, indFrame])
+
+    HaveNN = np.zeros((imgH, imgW, num_candidate))
+
+    if args.Nonlocal:
+        HaveKeySourceFrameFlowNN, gradient_x_KeySourceFrameFlowNN, gradient_y_KeySourceFrameFlowNN = \
+            get_KeySourceFrame_flowNN_gradient(sub,
+                                              indFrame,
+                                              mask,
+                                              videoNonLocalFlowB,
+                                              videoNonLocalFlowF,
+                                              gradient_x,
+                                              gradient_y,
+                                              args.consistencyThres)
+
+        HaveNN[:, :, 2] = HaveKeySourceFrameFlowNN[:, :, 0] == 1
+        HaveNN[:, :, 3] = HaveKeySourceFrameFlowNN[:, :, 1] == 1
+        HaveNN[:, :, 4] = HaveKeySourceFrameFlowNN[:, :, 2] == 1
+
+    HaveNN[:, :, 0] = HaveFlowNN[:, :, indFrame, 0] == 1
+    HaveNN[:, :, 1] = HaveFlowNN[:, :, indFrame, 1] == 1
+
+    NotHaveNN = np.logical_and(np.invert(HaveNN.astype(np.bool)),
+            np.repeat(np.expand_dims((mask[:, :, indFrame]), 2), num_candidate, axis=2))
+
+    if args.Nonlocal:
+        HaveNN_sum = np.logical_or.reduce((HaveNN[:, :, 0],
+                                           HaveNN[:, :, 1],
+                                           HaveNN[:, :, 2],
+                                           HaveNN[:, :, 3],
+                                           HaveNN[:, :, 4]))
+    else:
+        HaveNN_sum = np.logical_or.reduce((HaveNN[:, :, 0],
+                                           HaveNN[:, :, 1]))
+    return HaveNN, NotHaveNN, HaveNN_sum
 
 def get_flowNN_gradient(args,
                         gradient_x,
@@ -16,7 +61,8 @@ def get_flowNN_gradient(args,
                         videoFlowF,
                         videoFlowB,
                         videoNonLocalFlowF,
-                        videoNonLocalFlowB):
+                        videoNonLocalFlowB,
+                        executor):
 
     # gradient_x:         imgH x (imgW - 1 + 1) x 3 x nFrame
     # gradient_y:         (imgH - 1 + 1) x imgW x 3 x nFrame
@@ -435,49 +481,7 @@ def get_flowNN_gradient(args,
     mask_tofill = np.zeros((imgH, imgW, nFrame)).astype(np.bool)
 
     for indFrame in range(nFrame):
-        if args.Nonlocal:
-            consistencyMap[:, :, 2, indFrame], _ = consistCheck(
-                videoNonLocalFlowB[:, :, :, 0, indFrame],
-                videoNonLocalFlowF[:, :, :, 0, indFrame])
-            consistencyMap[:, :, 3, indFrame], _ = consistCheck(
-                videoNonLocalFlowB[:, :, :, 1, indFrame],
-                videoNonLocalFlowF[:, :, :, 1, indFrame])
-            consistencyMap[:, :, 4, indFrame], _ = consistCheck(
-                videoNonLocalFlowB[:, :, :, 2, indFrame],
-                videoNonLocalFlowF[:, :, :, 2, indFrame])
-
-        HaveNN = np.zeros((imgH, imgW, num_candidate))
-
-        if args.Nonlocal:
-            HaveKeySourceFrameFlowNN, gradient_x_KeySourceFrameFlowNN, gradient_y_KeySourceFrameFlowNN = \
-                get_KeySourceFrame_flowNN_gradient(sub,
-                                                  indFrame,
-                                                  mask,
-                                                  videoNonLocalFlowB,
-                                                  videoNonLocalFlowF,
-                                                  gradient_x,
-                                                  gradient_y,
-                                                  args.consistencyThres)
-
-            HaveNN[:, :, 2] = HaveKeySourceFrameFlowNN[:, :, 0] == 1
-            HaveNN[:, :, 3] = HaveKeySourceFrameFlowNN[:, :, 1] == 1
-            HaveNN[:, :, 4] = HaveKeySourceFrameFlowNN[:, :, 2] == 1
-
-        HaveNN[:, :, 0] = HaveFlowNN[:, :, indFrame, 0] == 1
-        HaveNN[:, :, 1] = HaveFlowNN[:, :, indFrame, 1] == 1
-
-        NotHaveNN = np.logical_and(np.invert(HaveNN.astype(np.bool)),
-                np.repeat(np.expand_dims((mask[:, :, indFrame]), 2), num_candidate, axis=2))
-
-        if args.Nonlocal:
-            HaveNN_sum = np.logical_or.reduce((HaveNN[:, :, 0],
-                                               HaveNN[:, :, 1],
-                                               HaveNN[:, :, 2],
-                                               HaveNN[:, :, 3],
-                                               HaveNN[:, :, 4]))
-        else:
-            HaveNN_sum = np.logical_or.reduce((HaveNN[:, :, 0],
-                                               HaveNN[:, :, 1]))
+        HaveNN, NotHaveNN, HaveNN_sum = calculateHaveNN()
 
         gradient_x_Candidate = np.zeros((imgH, imgW, 3, num_candidate))
         gradient_y_Candidate = np.zeros((imgH, imgW, 3, num_candidate))
