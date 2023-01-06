@@ -1,4 +1,6 @@
 import os
+from os.path import exists
+
 import sys
 sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..')))
 
@@ -355,7 +357,12 @@ def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori, corrFlowNLF_ori
 
     return video, corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB, flow_mask, mask_dilated, (W_start, H_start), (W_start + imgW, H_start + imgH)
 
-def complete_frame_flow(i, nFrame, mode, flow_mask, corrFlow, imgW, imgH, edge):
+def complete_frame_flow(i, nFrame, mode, flow_mask, corrFlow, imgW, imgH, edge, args):
+    path = os.path.join(args.outroot, 'flow_comp', mode + '_flo', '%05d.flo'%i)
+    if exists(path):
+        print("Found flow file $i")
+        return utils.frame_utils.readFlow(path)
+
     print("Completing {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
     flow = corrFlow[..., i]
     if mode == 'forward':
@@ -385,7 +392,14 @@ def complete_frame_flow(i, nFrame, mode, flow_mask, corrFlow, imgW, imgH, edge):
         imgSrc_gy = imgSrc_gy[0 : imgH - 1, :, :]
         imgSrc_gx = gradient[:, :, 0 : 2]
         imgSrc_gx = imgSrc_gx[:, 0 : imgW - 1, :]
-        return i, Poisson_blend(flow, imgSrc_gx, imgSrc_gy, flow_mask_img, edge[:, :, i])
+        # # Flow visualization.
+        flow_img = utils.flow_viz.flow_to_image(Poisson_blend(flow, imgSrc_gx, imgSrc_gy, flow_mask_img, edge[:, :, i]))
+        #flow_img = Image.fromarray(flow_img)
+        #
+        # # Saves the flow and flow_img.
+        #flow_img.save(os.path.join(args.outroot, 'flow_comp', mode + '_png', '%05d.png'%i))
+        utils.frame_utils.writeFlow(path, flow_img)
+        return i, flow_img
 
     else:
         if mode == 'forward' or mode == 'backward':
@@ -407,7 +421,6 @@ def complete_frame_flow(i, nFrame, mode, flow_mask, corrFlow, imgW, imgH, edge):
             flow[:, :, 0, 2] = rf.regionfill(flow[:, :, 0, 2], flow_mask[:, :, nFrame - 1])
             flow[:, :, 1, 2] = rf.regionfill(flow[:, :, 1, 2], flow_mask[:, :, nFrame - 1])
 
-
 def complete_flow(args, corrFlow, flow_mask, mode, executor, edge=None):
     """Completes flow.
     """
@@ -425,7 +438,8 @@ def complete_flow(args, corrFlow, flow_mask, mode, executor, edge=None):
     compFlow = np.zeros(((sh)), dtype=np.float32)
     t1 = time.perf_counter()
     ids = [n for n in range(nFrame)]
-    for i, res in executor.map(complete_frame_flow, ids, repeat(nFrame), repeat(mode), repeat(flow_mask), repeat(corrFlow), repeat(imgW), repeat(imgH), repeat(edge)):
+    
+    for i, res in executor.map(complete_frame_flow, ids, repeat(nFrame), repeat(mode), repeat(flow_mask), repeat(corrFlow), repeat(imgW), repeat(imgH), repeat(edge), repeat(args)):
         compFlow[:, :, :, i] = res
 
     t2 = time.perf_counter()
@@ -567,10 +581,12 @@ def video_completion(args, executor):
     deepfill = DeepFillv1(pretrained_model=args.deepfill_model, image_shape=[imgH, imgW])
     ids = [n for n in range(nFrame)]
     completedFrames = []
+    create_dir(os.path.join(args.outroot, 'frame_comp_' + 'final'))
     # We iteratively complete the video.
     while(np.sum(mask_tofill) > 0):
         create_dir(os.path.join(args.outroot, 'frame_comp_' + str(iter)))
-
+        incomplete = np.setdiff1d(ids, completedFrames)
+        print('\nincomplete frames .'+ str(len(incomplete)))
         # Color propagation.
         video_comp, mask_tofill, _ = get_flowNN(args,
                                       video_comp,
@@ -579,22 +595,24 @@ def video_completion(args, executor):
                                       videoFlowB,
                                       videoNonLocalFlowF,
                                       videoNonLocalFlowB,
+                                      completedFrames,
                                       executor)
         
-        for i, img in executor.map(fill_mask, np.setdiff1d(ids, completedFrames), repeat(mask_tofill), repeat(video_comp)):
+        for i, img in executor.map(fill_mask, incomplete, repeat(mask_tofill), repeat(video_comp)):
             if img is None:
                 completedFrames.append(i)
+                cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', '%05d.png'%i), video_comp[:, :, :, i] * 255)
             else:
-                cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + str(iter), '%05d.png'%i), img)
+                cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + str(iter), '%05d.jpg'%i), img)
 
         mask_tofill, video_comp = spatial_inpaint(deepfill, mask_tofill, video_comp)
         iter += 1
 
-    create_dir(os.path.join(args.outroot, 'frame_comp_' + 'final'))
+    
     video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
-    for i in executor.map(ids):
+    #for i in executor.map(ids):
     #for i in range(nFrame):
-        cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', '%05d.png'%i), video_comp[:, :, :, i] * 255)
+    #    cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', '%05d.png'%i), video_comp[:, :, :, i] * 255)
     imageio.mimwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', 'final.mp4'), video_comp_, fps=12, quality=8, macro_block_size=1)
         # imageio.mimsave(os.path.join(args.outroot, 'frame_comp_' + 'final', 'final.gif'), video_comp_, format='gif', fps=12)
 
@@ -799,7 +817,7 @@ def main(args):
         "Accepted modes: 'object_removal', 'video_extrapolation', but input is %s"
     ) % mode
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=args.workers)
 
     if args.seamless:
         video_completion_seamless(args, executor)
@@ -838,6 +856,8 @@ if __name__ == '__main__':
     # extrapolation
     parser.add_argument('--H_scale', dest='H_scale', default=2, type=float, help='H extrapolation scale')
     parser.add_argument('--W_scale', dest='W_scale', default=2, type=float, help='W extrapolation scale')
+
+    parser.add_argument('--workers', default=1, type=int, help="number of workers")
 
     args = parser.parse_args()
 

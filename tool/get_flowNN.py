@@ -14,7 +14,7 @@ def calculateMask(indFrame, mask_tofill, imgW, imgH, num_candidate, HaveFlowNN, 
     HaveNN, NotHaveNN, HaveNN_sum, imgKeySourceFrameFlowNN = calculateHaveNN(indFrame, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, sub, args.Nonlocal, args.consistencyThres)
     res, video = calculatePixel(indFrame, videoBN, videoFN, imgW, imgH, num_candidate, consistencyMap, imgKeySourceFrameFlowNN, HaveNN, NotHaveNN, HaveNN_sum, mask, video, args.Nonlocal, args.alpha)
     
-    return res, video
+    return res, video, indFrame
 
 
 def calculateHaveNN(indFrame, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, sub, nonLocal, consistencyThres):
@@ -441,6 +441,7 @@ def get_flowNN(args,
                videoFlowB,
                videoNonLocalFlowF,
                videoNonLocalFlowB,
+               completedFrames,
                executor):
 
     # video:      imgH x imgW x 3 x nFrame
@@ -513,12 +514,14 @@ def get_flowNN(args,
     videoFN = copy.deepcopy(video)
     ids = [n for n in range(nFrame)]
 
-    for videoBN, flowNN in executor.map(map_backwards, ids, repeat(flowNN), repeat(videoBN), repeat(sub)):
+    incompleteFrames = np.setdiff1d(ids, completedFrames)
+
+    for videoBN, flowNN in executor.map(map_backwards, incompleteFrames, repeat(flowNN), repeat(videoBN), repeat(sub)):
         videoBN = videoBN
     #for indFrame in range(nFrame):
         #map_backwards(indFrame, flowNN, videoBN)
     
-    for videoFN, flowNN in executor.map(map_forward, ids, repeat(flowNN), repeat(videoFN), repeat(sub)):
+    for videoFN, flowNN in executor.map(map_forward, incompleteFrames, repeat(flowNN), repeat(videoFN), repeat(sub)):
         videoFN = videoFN
     #for indFrame in range(nFrame - 1, -1, -1):
         #map_forward(indFrame, flowNN, videoFN)
@@ -526,10 +529,10 @@ def get_flowNN(args,
     # New mask
     mask_tofill = np.zeros((imgH, imgW, nFrame)).astype(np.bool)
     
-    #for res, video in executor.map(calculateMask, ids, repeat(mask_tofill), repeat(imgW), repeat(imgH), repeat(num_candidate), repeat(HaveFlowNN), repeat(consistencyMap), repeat(videoNonLocalFlowF), repeat(videoNonLocalFlowB), repeat(mask), repeat(video), repeat(videoBN), repeat(videoFN), repeat(sub), repeat(args)):
-        #mask_tofill[res, indFrame] = True
-    for indFrame in range(nFrame):
-        res, video = calculateMask(indFrame, mask_tofill, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, videoBN, videoFN, sub, args)
+    for res, video, indFrame in executor.map(calculateMask, incompleteFrames, repeat(mask_tofill), repeat(imgW), repeat(imgH), repeat(num_candidate), repeat(HaveFlowNN), repeat(consistencyMap), repeat(videoNonLocalFlowF), repeat(videoNonLocalFlowB), repeat(mask), repeat(video), repeat(videoBN), repeat(videoFN), repeat(sub), repeat(args)):
         mask_tofill[res, indFrame] = True
+    #for indFrame in range(nFrame):
+    #    res, video = calculateMask(indFrame, mask_tofill, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, videoBN, videoFN, sub, args)
+    #    mask_tofill[res, indFrame] = True
 
     return video, mask_tofill, HaveFlowNN
