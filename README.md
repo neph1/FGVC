@@ -1,3 +1,21 @@
+Fork Info:
+
+This fork is about cutting down processing time by using and executor to distribute processing. It also tries to minimize unnecessary work by only processing unfinished frames (those with mask left)
+
+In addition it runs the "forward" and "backwards" passes simultaneously (huge speed up)
+
+Changes currently only applies to the non-seamless variant of video completion.
+
+
+I'm testing on a half size tennis set, using --H_scale 1.5 and --W_scale 1.5, which is about what my rig can handle
+
+Current (unreliable) results:
+
+Whole flow time improvement: 8.25 minutes vs 5 minutes 
+
+Only Frame_comp: 4.05 minutes vs 2.25 minutes
+
+
 # [ECCV 2020] Flow-edge Guided Video Completion
 
 ### [[Paper](https://arxiv.org/abs/2009.01835)] [[Project Website](http://chengao.vision/FGVC/)] [[Google Colab](https://colab.research.google.com/drive/1pb6FjWdwq_q445rG2NP0dubw7LKNUkqc?usp=sharing)]
