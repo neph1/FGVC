@@ -610,11 +610,7 @@ def video_completion(args, executor):
 
     
     video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
-    #for i in executor.map(ids):
-    #for i in range(nFrame):
-    #    cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', '%05d.png'%i), video_comp[:, :, :, i] * 255)
     imageio.mimwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', 'final.mp4'), video_comp_, fps=12, quality=8, macro_block_size=1)
-        # imageio.mimsave(os.path.join(args.outroot, 'frame_comp_' + 'final', 'final.gif'), video_comp_, format='gif', fps=12)
 
 
 def video_completion_seamless(args):

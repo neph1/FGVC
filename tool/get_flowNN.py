@@ -10,6 +10,15 @@ from utils.common_utils import interp, BFconsistCheck, \
 import concurrent.futures
 from itertools import repeat
 
+def backAndForwardPass(i, frameIndSetF, frameIndSetB, imgW, imgH, numPixInd, videoFlowF, videoFlowB, consistencyMap, consistency_uv, mask, flowNN, HaveFlowNN, sub, args):
+    if(i == 0):
+        for indFrame in frameIndSetF:
+            consistencyMap, consistency_uv, flowNN, HaveFlowNN = forward_pass(indFrame, i, imgW, imgH, numPixInd, videoFlowF, videoFlowB, consistencyMap, consistency_uv, mask, flowNN, HaveFlowNN, sub, args);
+    else:
+        for indFrame in frameIndSetB:
+            consistencyMap, consistency_uv, flowNN, HaveFlowNN = backwards_pass(indFrame, i, imgW, imgH, numPixInd, videoFlowF, videoFlowB, consistencyMap, consistency_uv, mask, flowNN, HaveFlowNN, sub, args);
+    return consistencyMap, consistency_uv, flowNN, HaveFlowNN
+
 def calculateMask(indFrame, mask_tofill, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, videoBN, videoFN, sub, args):
     HaveNN, NotHaveNN, HaveNN_sum, imgKeySourceFrameFlowNN = calculateHaveNN(indFrame, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, sub, args.Nonlocal, args.consistencyThres)
     res, video = calculatePixel(indFrame, videoBN, videoFN, imgW, imgH, num_candidate, consistencyMap, imgKeySourceFrameFlowNN, HaveNN, NotHaveNN, HaveNN_sum, mask, video, args.Nonlocal, args.alpha)
@@ -89,6 +98,9 @@ def calculatePixel(indFrame, videoBN, videoFN, imgW, imgH, num_candidate, consis
     fix = np.where((consistencyMap[HaveNN_sum, :, indFrame] * HaveNN[HaveNN_sum, :]).sum(axis=1, keepdims=True) == 0)[0]
     weights[fix, :] = HaveNN[HaveNN_sum, :][fix, :] / HaveNN[HaveNN_sum, :][fix, :].sum(axis=1, keepdims=True)
 
+    #channels = [n for n in 3]
+    #for i, res in executor.map(channels, videoCandidate, HaveNN_sum)
+    #    video[HaveNN_sum, i, indFrame] = res
     # Fuse RGB channel independently
     video[HaveNN_sum, 0, indFrame] = \
         np.sum(np.multiply(videoCandidate[HaveNN_sum, 0, :], weights), axis=1)
@@ -490,24 +502,8 @@ def get_flowNN(args,
     frameIndSetF = range(1, nFrame)
     frameIndSetB = range(nFrame - 2, -1, -1)
 
-    # 1. Forward Pass (backward flow propagation)
-    print('Forward Pass......')
-
-    NN_idx = 0 # BN:0
-    #for consistencyMap, consistency_uv, flowNN, HaveFlowNN in executor.map(forward_pass, frameIndSetF, repeat(NN_idx), repeat(imgW), repeat(imgH), repeat(numPixInd), repeat(videoFlowF), repeat(videoFlowB), repeat(consistencyMap), repeat(consistency_uv), repeat(mask), repeat(flowNN), repeat(HaveFlowNN), repeat(sub), repeat(args)):
-    #    consistencyMap = consistencyMap
-    for indFrame in frameIndSetF:
-        consistencyMap, consistency_uv, flowNN, HaveFlowNN = forward_pass(indFrame, NN_idx, imgW, imgH, numPixInd, videoFlowF, videoFlowB, consistencyMap, consistency_uv, mask, flowNN, HaveFlowNN, sub, args);
-
-    # 2. Backward Pass (forward flow propagation)
-    print('Backward Pass......')
-
-    NN_idx = 1 # FN:1
-    #for consistencyMap, consistency_uv, flowNN, HaveFlowNN in executor.map(backwards_pass, frameIndSetB, repeat(NN_idx), repeat(imgW), repeat(imgH), repeat(numPixInd), repeat(videoFlowF), repeat(videoFlowB), repeat(consistencyMap), repeat(consistency_uv), repeat(mask), repeat(flowNN), repeat(HaveFlowNN), repeat(sub), repeat(args)):
-    #    consistencyMap = consistencyMap
-    for indFrame in frameIndSetB:
-        consistencyMap, consistency_uv, flowNN, HaveFlowNN = backwards_pass(indFrame, NN_idx, imgW, imgH, numPixInd, videoFlowF, videoFlowB, consistencyMap, consistency_uv, mask, flowNN, HaveFlowNN, sub, args);
-        
+    for consistencyMap, consistency_uv, flowNN, HaveFlowNN in executor.map(backAndForwardPass, [0, 1], repeat(frameIndSetF), repeat(frameIndSetB), repeat(imgW), repeat(imgH), repeat(numPixInd), repeat(videoFlowF), repeat(videoFlowB), repeat(consistencyMap), repeat(consistency_uv), repeat(mask), repeat(flowNN), repeat(HaveFlowNN), repeat(sub), repeat(args)):
+        consistencyMap = consistencyMap
 
     # Interpolation
     videoBN = copy.deepcopy(video)
@@ -517,22 +513,15 @@ def get_flowNN(args,
     incompleteFrames = np.setdiff1d(ids, completedFrames)
 
     for videoBN, flowNN in executor.map(map_backwards, incompleteFrames, repeat(flowNN), repeat(videoBN), repeat(sub)):
-        videoBN = videoBN
-    #for indFrame in range(nFrame):
-        #map_backwards(indFrame, flowNN, videoBN)
+        flowNN = flowNN
     
     for videoFN, flowNN in executor.map(map_forward, incompleteFrames, repeat(flowNN), repeat(videoFN), repeat(sub)):
-        videoFN = videoFN
-    #for indFrame in range(nFrame - 1, -1, -1):
-        #map_forward(indFrame, flowNN, videoFN)
+        flowNN = flowNN
 
     # New mask
     mask_tofill = np.zeros((imgH, imgW, nFrame)).astype(np.bool)
     
     for res, video, indFrame in executor.map(calculateMask, incompleteFrames, repeat(mask_tofill), repeat(imgW), repeat(imgH), repeat(num_candidate), repeat(HaveFlowNN), repeat(consistencyMap), repeat(videoNonLocalFlowF), repeat(videoNonLocalFlowB), repeat(mask), repeat(video), repeat(videoBN), repeat(videoFN), repeat(sub), repeat(args)):
         mask_tofill[res, indFrame] = True
-    #for indFrame in range(nFrame):
-    #    res, video = calculateMask(indFrame, mask_tofill, imgW, imgH, num_candidate, HaveFlowNN, consistencyMap, videoNonLocalFlowF, videoNonLocalFlowB, mask, video, videoBN, videoFN, sub, args)
-    #    mask_tofill[res, indFrame] = True
 
     return video, mask_tofill, HaveFlowNN
